@@ -13,3 +13,6 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# FFmpeg source/build intermediates (scripts/build_ffmpeg.sh)
+/.ffmpeg-build

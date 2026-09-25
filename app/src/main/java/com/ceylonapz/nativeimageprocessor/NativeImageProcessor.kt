@@ -25,4 +25,24 @@ class NativeImageProcessor {
      * The source is not modified. Returns null if [radius] < 1 or the format is unsupported.
      */
     external fun blur(bitmap: Bitmap, radius: Int): Bitmap?
+
+    /**
+     * Re-encodes the video at [inputPath] to an H.264 MP4 at [outputPath] with [watermark]
+     * blended into the bottom-right corner, [marginPx] from the edges (FFmpeg + MediaCodec).
+     * Audio is copied unchanged. Blocks until done; call off the main thread.
+     *
+     * @return null on success, otherwise an error message.
+     */
+    external fun addVideoWatermark(
+        inputPath: String,
+        outputPath: String,
+        watermark: Bitmap,
+        marginPx: Int,
+        listener: ProgressListener?
+    ): String?
+}
+
+/** Receives progress in 0..1 from native code, on the calling thread. */
+fun interface ProgressListener {
+    fun onProgress(progress: Float)
 }
