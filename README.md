@@ -19,10 +19,17 @@ Jetpack Compose UI; the pixel work runs in native code.
 └────────────────────────────┘
 ```
 
+## Screenshots
+
+| Image filters | Video watermark |
+|:---:|:---:|
+| <img src="docs/screenshots/photo.png" alt="Image filters screen" width="300"> | <img src="docs/screenshots/video.png" alt="Video watermark screen" width="300"> |
+
 ---
 
 ## Contents
 
+- [Screenshots](#screenshots)
 - [Requirements](#requirements)
 - [Getting started](#getting-started)
 - [Project structure](#project-structure)
