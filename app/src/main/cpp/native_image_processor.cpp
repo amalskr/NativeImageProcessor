@@ -5,7 +5,7 @@
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_com_example_nativeimageprocessor_NativeImageProcessor_sayHello(
+Java_com_ceylonapz_nativeimageprocessor_NativeImageProcessor_sayHello(
         JNIEnv* env,
         jobject thiz) {
 
