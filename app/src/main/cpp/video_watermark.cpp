@@ -2,7 +2,7 @@
 //
 // Pipeline: demux (mov/mp4) -> decode video -> convert to NV12 -> alpha-blend watermark
 //           -> encode H.264 (h264_mediacodec, i.e. the device's hardware encoder) -> mux mp4.
-// Audio (and other A/V streams) are copied through without re-encoding.
+// Audio streams are copied through without re-encoding; subtitle/data streams are dropped.
 //
 // Watermarks are RGBA Bitmaps rendered by Kotlin in *display* orientation, each placed at the
 // bottom-right or centre. Phone videos are often stored rotated with a display-matrix tag, so
