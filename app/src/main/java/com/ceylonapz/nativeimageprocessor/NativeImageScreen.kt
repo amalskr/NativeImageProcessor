@@ -18,11 +18,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -52,6 +54,7 @@ fun NativeImageScreen(modifier: Modifier = Modifier) {
     var processedBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isLoading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    var blurRadius by remember { mutableIntStateOf(8) }
     val scope = rememberCoroutineScope()
 
     // System photo picker: no storage permission required.
@@ -175,6 +178,48 @@ fun NativeImageScreen(modifier: Modifier = Modifier) {
                 modifier = Modifier.weight(1f)
             ) {
                 Text("Resize 50%")
+            }
+        }
+
+        Text("Blur radius: $blurRadius")
+        Slider(
+            value = blurRadius.toFloat(),
+            onValueChange = { blurRadius = it.toInt() },
+            valueRange = 1f..25f,
+            steps = 23,
+            enabled = !isLoading
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Button(
+                onClick = {
+                    val source = current ?: return@Button
+                    val radius = blurRadius
+                    scope.launch {
+                        isLoading = true
+                        // blur() returns a new Bitmap and leaves the source untouched.
+                        val result = withContext(Dispatchers.Default) {
+                            try {
+                                processor?.blur(source, radius)
+                            } catch (e: OutOfMemoryError) {
+                                null
+                            }
+                        }
+                        if (result != null) {
+                            processedBitmap = result
+                        } else {
+                            error = "Blur failed"
+                        }
+                        isLoading = false
+                    }
+                },
+                enabled = current != null && !isLoading,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("Blur (C++)")
             }
 
             OutlinedButton(

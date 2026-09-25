@@ -2,6 +2,10 @@
 #include <android/log.h>
 #include <android/bitmap.h>
 
+#include <algorithm>
+#include <new>
+#include <vector>
+
 #define LOG_TAG "NativeImageProcessor"
 
 extern "C"
@@ -203,6 +207,110 @@ Java_com_ceylonapz_nativeimageprocessor_NativeImageProcessor_resize(JNIEnv *env,
 
     AndroidBitmap_unlockPixels(env, dstBitmap);
     AndroidBitmap_unlockPixels(env, bitmap);
+
+    return dstBitmap;
+}
+
+// One box-blur pass along a line of `count` pixels spaced `step` apart.
+// Uses a sliding window, so cost is O(count) regardless of radius. Edges are clamped.
+static void boxBlurLine(const uint32_t* src, uint32_t* dst, int count, int step, int radius) {
+    const int window = 2 * radius + 1;
+    const int last = count - 1;
+    uint32_t sum[4] = {0, 0, 0, 0};
+
+    // Prime the window centred on index 0.
+    for (int i = -radius; i <= radius; i++) {
+        uint32_t p = src[std::clamp(i, 0, last) * step];
+        for (int c = 0; c < 4; c++) sum[c] += (p >> (c * 8)) & 0xFF;
+    }
+
+    for (int i = 0; i < count; i++) {
+        uint32_t out = 0;
+        for (int c = 0; c < 4; c++) {
+            out |= ((sum[c] + window / 2) / window) << (c * 8);
+        }
+        dst[i * step] = out;
+
+        // Slide: drop the pixel leaving on the left, add the one entering on the right.
+        uint32_t leaving = src[std::clamp(i - radius, 0, last) * step];
+        uint32_t entering = src[std::clamp(i + radius + 1, 0, last) * step];
+        for (int c = 0; c < 4; c++) {
+            sum[c] += ((entering >> (c * 8)) & 0xFF);
+            sum[c] -= ((leaving >> (c * 8)) & 0xFF);
+        }
+    }
+}
+
+// Blur with the given radius. The source is only read; a new Bitmap is returned.
+// Three box-blur passes approximate a Gaussian blur.
+extern "C"
+JNIEXPORT jobject JNICALL
+Java_com_ceylonapz_nativeimageprocessor_NativeImageProcessor_blur(JNIEnv *env, jobject thiz,
+                                                                  jobject bitmap,
+                                                                  jint radius) {
+    if (radius < 1) {
+        return nullptr;
+    }
+
+    AndroidBitmapInfo srcInfo;
+    if (AndroidBitmap_getInfo(env, bitmap, &srcInfo) < 0 ||
+        srcInfo.format != ANDROID_BITMAP_FORMAT_RGBA_8888 ||
+        srcInfo.width == 0 || srcInfo.height == 0) {
+        return nullptr;
+    }
+
+    const int width = static_cast<int>(srcInfo.width);
+    const int height = static_cast<int>(srcInfo.height);
+
+    // Two packed working buffers (no row padding) for ping-ponging between passes.
+    std::vector<uint32_t> a, b;
+    try {
+        a.resize(static_cast<size_t>(width) * height);
+        b.resize(a.size());
+    } catch (const std::bad_alloc&) {
+        return nullptr;
+    }
+
+    void* srcPixels = nullptr;
+    if (AndroidBitmap_lockPixels(env, bitmap, &srcPixels) < 0) {
+        return nullptr;
+    }
+    const auto* srcBase = static_cast<const uint8_t*>(srcPixels);
+    for (int y = 0; y < height; y++) {
+        const auto* row = reinterpret_cast<const uint32_t*>(srcBase + y * srcInfo.stride);
+        std::copy(row, row + width, a.begin() + static_cast<size_t>(y) * width);
+    }
+    AndroidBitmap_unlockPixels(env, bitmap);
+
+    // Pixels are premultiplied, which is the correct space to average in.
+    for (int pass = 0; pass < 3; pass++) {
+        for (int y = 0; y < height; y++) {
+            size_t offset = static_cast<size_t>(y) * width;
+            boxBlurLine(a.data() + offset, b.data() + offset, width, 1, radius);
+        }
+        for (int x = 0; x < width; x++) {
+            boxBlurLine(b.data() + x, a.data() + x, height, width, radius);
+        }
+    }
+
+    jobject dstBitmap = createArgb8888Bitmap(env, width, height);
+    if (dstBitmap == nullptr) {
+        return nullptr;
+    }
+
+    AndroidBitmapInfo dstInfo;
+    void* dstPixels = nullptr;
+    if (AndroidBitmap_getInfo(env, dstBitmap, &dstInfo) < 0 ||
+        AndroidBitmap_lockPixels(env, dstBitmap, &dstPixels) < 0) {
+        env->DeleteLocalRef(dstBitmap);
+        return nullptr;
+    }
+    auto* dstBase = static_cast<uint8_t*>(dstPixels);
+    for (int y = 0; y < height; y++) {
+        auto* row = reinterpret_cast<uint32_t*>(dstBase + y * dstInfo.stride);
+        std::copy_n(a.begin() + static_cast<size_t>(y) * width, width, row);
+    }
+    AndroidBitmap_unlockPixels(env, dstBitmap);
 
     return dstBitmap;
 }

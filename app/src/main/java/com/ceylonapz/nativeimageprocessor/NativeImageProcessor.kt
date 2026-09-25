@@ -19,4 +19,10 @@ class NativeImageProcessor {
      * The source is not modified. Returns null on invalid input or unsupported format.
      */
     external fun resize(bitmap: Bitmap, width: Int, height: Int): Bitmap?
+
+    /**
+     * Returns a new blurred copy of [bitmap] (three box-blur passes, approximating a Gaussian).
+     * The source is not modified. Returns null if [radius] < 1 or the format is unsupported.
+     */
+    external fun blur(bitmap: Bitmap, radius: Int): Bitmap?
 }
