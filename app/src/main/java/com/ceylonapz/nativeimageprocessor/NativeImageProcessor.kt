@@ -27,20 +27,43 @@ class NativeImageProcessor {
     external fun blur(bitmap: Bitmap, radius: Int): Bitmap?
 
     /**
-     * Re-encodes the video at [inputPath] to an H.264 MP4 at [outputPath] with [watermark]
-     * blended into the bottom-right corner, [marginPx] from the edges (FFmpeg + MediaCodec).
-     * Audio is copied unchanged. Blocks until done; call off the main thread.
+     * Re-encodes the video at [inputPath] to an H.264 MP4 at [outputPath] with each of
+     * [layers] blended in at its position ([marginPx] from the edges for corner positions),
+     * using FFmpeg + MediaCodec. Audio is copied unchanged. Blocks until done; call off the
+     * main thread.
      *
      * @return null on success, otherwise an error message.
      */
-    external fun addVideoWatermark(
+    fun addVideoWatermark(
         inputPath: String,
         outputPath: String,
-        watermark: Bitmap,
+        layers: List<WatermarkLayer>,
+        marginPx: Int,
+        listener: ProgressListener?
+    ): String? = addVideoWatermark(
+        inputPath,
+        outputPath,
+        layers.map { it.bitmap }.toTypedArray(),
+        layers.map { it.position.ordinal }.toIntArray(),
+        marginPx,
+        listener
+    )
+
+    private external fun addVideoWatermark(
+        inputPath: String,
+        outputPath: String,
+        watermarks: Array<Bitmap>,
+        positions: IntArray,
         marginPx: Int,
         listener: ProgressListener?
     ): String?
 }
+
+/** Where a watermark is placed in the displayed video. Order must match `Position` in C++. */
+enum class WatermarkPosition { BOTTOM_RIGHT, CENTER }
+
+/** An ARGB_8888 [bitmap] (display orientation) to blend at [position]. */
+class WatermarkLayer(val bitmap: Bitmap, val position: WatermarkPosition)
 
 /** Receives progress in 0..1 from native code, on the calling thread. */
 fun interface ProgressListener {

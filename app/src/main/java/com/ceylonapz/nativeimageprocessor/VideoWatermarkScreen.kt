@@ -2,15 +2,19 @@ package com.ceylonapz.nativeimageprocessor
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.BlurMaskFilter
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.widget.MediaController
 import android.widget.VideoView
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.annotation.DrawableRes
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -197,9 +201,14 @@ private fun watermarkVideo(
     val (displayWidth, displayHeight) = readDisplaySize(context, uri)
         ?: return "Cannot read video size"
 
-    // Size the text relative to the video so it looks the same at any resolution.
+    // Size everything relative to the video so it looks the same at any resolution.
     val shortSide = min(displayWidth, displayHeight)
-    val watermark = createWatermarkBitmap(WATERMARK_TEXT, textSizePx = shortSide * 0.06f)
+    val text = createWatermarkBitmap(WATERMARK_TEXT, textSizePx = shortSide * 0.06f)
+    val icon = createCenterIconBitmap(context, R.drawable.copyright, sizePx = (shortSide * 0.12f).roundToInt())
+    val layers = listOf(
+        WatermarkLayer(text, WatermarkPosition.BOTTOM_RIGHT),
+        WatermarkLayer(icon, WatermarkPosition.CENTER)
+    )
     val margin = (shortSide * 0.03f).roundToInt()
 
     output.delete()
@@ -212,7 +221,7 @@ private fun watermarkVideo(
             processor.addVideoWatermark(
                 inputPath = "/proc/self/fd/${it.fd}",
                 outputPath = output.absolutePath,
-                watermark = watermark,
+                layers = layers,
                 marginPx = margin,
                 listener = onProgress
             )
@@ -220,7 +229,8 @@ private fun watermarkVideo(
     } catch (e: Exception) {
         "Cannot open video: ${e.message}"
     } finally {
-        watermark.recycle()
+        text.recycle()
+        icon.recycle()
     }
 }
 
@@ -259,4 +269,37 @@ private fun createWatermarkBitmap(text: String, textSizePx: Float): Bitmap {
     val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
     Canvas(bitmap).drawText(text, pad.toFloat(), (pad - metrics.ascent).toFloat(), paint)
     return bitmap
+}
+
+/**
+ * Loads [iconRes] as a mostly opaque white silhouette of [sizePx] (longest side), with a soft
+ * dark glow so it stays visible on both bright and dark footage.
+ */
+private fun createCenterIconBitmap(context: Context, @DrawableRes iconRes: Int, sizePx: Int): Bitmap {
+    // inScaled=false: use the file's own pixels, not density-scaled ones; we scale below.
+    val source = BitmapFactory.decodeResource(
+        context.resources, iconRes, BitmapFactory.Options().apply { inScaled = false }
+    )
+    val scale = sizePx.toFloat() / max(source.width, source.height)
+    val w = max(1, (source.width * scale).roundToInt())
+    val h = max(1, (source.height * scale).roundToInt())
+    val mask = Bitmap.createScaledBitmap(source, w, h, true).extractAlpha()
+    source.recycle()
+
+    val glow = (sizePx * 0.04f).coerceAtLeast(1f)
+    val pad = (glow * 2).roundToInt()
+    val result = Bitmap.createBitmap(w + pad * 2, h + pad * 2, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(result)
+    // Draw into an explicit rect: drawBitmap(bitmap, x, y) rescales by bitmap vs. canvas
+    // density (160 dpi resource vs. device dpi), which blew the icon up ~3x and cropped it.
+    val dst = Rect(pad, pad, pad + w, pad + h)
+    canvas.drawBitmap(mask, null, dst, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+        color = Color.argb(150, 0, 0, 0)
+        maskFilter = BlurMaskFilter(glow, BlurMaskFilter.Blur.NORMAL)
+    })
+    canvas.drawBitmap(mask, null, dst, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+        color = Color.argb(215, 255, 255, 255)
+    })
+    mask.recycle()
+    return result
 }

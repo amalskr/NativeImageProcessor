@@ -4,9 +4,9 @@
 //           -> encode H.264 (h264_mediacodec, i.e. the device's hardware encoder) -> mux mp4.
 // Audio (and other A/V streams) are copied through without re-encoding.
 //
-// The watermark is an RGBA Bitmap rendered by Kotlin in *display* orientation. Phone videos
-// are often stored rotated with a display-matrix tag, so the overlay is rotated into the
-// coded frame's orientation and the tag is copied to the output.
+// Watermarks are RGBA Bitmaps rendered by Kotlin in *display* orientation, each placed at the
+// bottom-right or centre. Phone videos are often stored rotated with a display-matrix tag, so
+// each overlay is rotated into the coded frame's orientation and the tag is copied to the output.
 
 #include <jni.h>
 #include <android/bitmap.h>
@@ -69,6 +69,14 @@ struct Rgba {
     std::vector<uint32_t> pixels;  // premultiplied, bytes R,G,B,A (0xAABBGGRR)
 };
 
+// Must match WatermarkPosition in NativeImageProcessor.kt.
+enum Position { kBottomRight = 0, kCenter = 1 };
+
+struct Layer {
+    Rgba image;
+    Position position = kBottomRight;
+};
+
 struct Overlay {
     int x = 0, y = 0;          // top-left in coded frame (even)
     int width = 0, height = 0; // even
@@ -113,16 +121,22 @@ void rgbToYuv(bool bt709, float r, float g, float b, uint8_t& y, uint8_t& u, uin
     }
 }
 
-// Builds the overlay so the watermark lands at the bottom-right of the *displayed* video.
-bool buildOverlay(const Rgba& wm, int W, int H, int rotation, int margin, bool bt709,
-                  Overlay& out) {
+// Builds the overlay so the watermark lands at [position] of the *displayed* video.
+bool buildOverlay(const Rgba& wm, Position position, int W, int H, int rotation, int margin,
+                  bool bt709, Overlay& out) {
     const bool swapped = rotation == 90 || rotation == 270;
     const int displayW = swapped ? H : W;
     const int displayH = swapped ? W : H;
 
     // Watermark rectangle in display space, clipped to the frame.
-    const int dx0 = std::max(0, displayW - margin - wm.width);
-    const int dy0 = std::max(0, displayH - margin - wm.height);
+    int dx0, dy0;
+    if (position == kCenter) {
+        dx0 = std::max(0, (displayW - wm.width) / 2);
+        dy0 = std::max(0, (displayH - wm.height) / 2);
+    } else {
+        dx0 = std::max(0, displayW - margin - wm.width);
+        dy0 = std::max(0, displayH - margin - wm.height);
+    }
     const int dx1 = std::min(displayW, dx0 + wm.width) - 1;
     const int dy1 = std::min(displayH, dy0 + wm.height) - 1;
     if (dx1 < dx0 || dy1 < dy0) return false;
@@ -270,8 +284,8 @@ public:
     }
 
     // Returns an empty string on success, otherwise an error message.
-    std::string run(const char* inputPath, const char* outputPath, const Rgba& watermark,
-                    int margin, ProgressReporter& progress) {
+    std::string run(const char* inputPath, const char* outputPath,
+                    const std::vector<Layer>& layers, int margin, ProgressReporter& progress) {
         std::string err;
         if (!(err = openInput(inputPath)).empty()) return err;
         if (!(err = openDecoder()).empty()) return err;
@@ -281,9 +295,13 @@ public:
 
         bt709_ = decoder_->colorspace == AVCOL_SPC_BT709 ||
                  (decoder_->colorspace == AVCOL_SPC_UNSPECIFIED && decoder_->height >= 720);
-        if (!buildOverlay(watermark, decoder_->width, decoder_->height, rotation_, margin, bt709_,
-                          overlay_)) {
-            return "Watermark does not fit in the video";
+        for (const Layer& layer : layers) {
+            Overlay overlay;
+            if (!buildOverlay(layer.image, layer.position, decoder_->width, decoder_->height,
+                              rotation_, margin, bt709_, overlay)) {
+                return "Watermark does not fit in the video";
+            }
+            overlays_.push_back(std::move(overlay));
         }
 
         int ret = avio_open(&output_->pb, outputPath, AVIO_FLAG_WRITE);
@@ -524,7 +542,7 @@ private:
         sws_scale(sws_, decFrame_->data, decFrame_->linesize, 0, decFrame_->height,
                   encFrame_->data, encFrame_->linesize);
 
-        blendNv12(encFrame_, overlay_);
+        for (const Overlay& overlay : overlays_) blendNv12(encFrame_, overlay);
 
         int64_t pts = decFrame_->best_effort_timestamp;
         if (pts == AV_NOPTS_VALUE) {
@@ -623,7 +641,7 @@ private:
     int rotation_ = 0;
     int frameCount_ = 0;
     std::vector<int> streamMap_;
-    Overlay overlay_;
+    std::vector<Overlay> overlays_;
 };
 
 bool readBitmap(JNIEnv* env, jobject bitmap, Rgba& out) {
@@ -650,16 +668,28 @@ bool readBitmap(JNIEnv* env, jobject bitmap, Rgba& out) {
 }  // namespace
 
 // Returns null on success, or an error message.
+// watermarks[i] is placed at positions[i] (see Position).
 extern "C"
 JNIEXPORT jstring JNICALL
 Java_com_ceylonapz_nativeimageprocessor_NativeImageProcessor_addVideoWatermark(
         JNIEnv* env, jobject thiz,
         jstring inputPath, jstring outputPath,
-        jobject watermark, jint margin, jobject listener) {
+        jobjectArray watermarks, jintArray positions, jint margin, jobject listener) {
 
-    Rgba wm;
-    if (!readBitmap(env, watermark, wm)) {
-        return env->NewStringUTF("Watermark must be an ARGB_8888 bitmap");
+    const jsize count = env->GetArrayLength(watermarks);
+    if (count == 0 || env->GetArrayLength(positions) != count) {
+        return env->NewStringUTF("Need one position per watermark");
+    }
+
+    std::vector<Layer> layers(count);
+    std::vector<jint> pos(count);
+    env->GetIntArrayRegion(positions, 0, count, pos.data());
+    for (jsize i = 0; i < count; i++) {
+        jobject bitmap = env->GetObjectArrayElement(watermarks, i);
+        const bool ok = readBitmap(env, bitmap, layers[i].image);
+        env->DeleteLocalRef(bitmap);
+        if (!ok) return env->NewStringUTF("Watermarks must be ARGB_8888 bitmaps");
+        layers[i].position = pos[i] == kCenter ? kCenter : kBottomRight;
     }
 
     const char* in = env->GetStringUTFChars(inputPath, nullptr);
@@ -669,7 +699,7 @@ Java_com_ceylonapz_nativeimageprocessor_NativeImageProcessor_addVideoWatermark(
     std::string error;
     {
         Watermarker watermarker;
-        error = watermarker.run(in, out, wm, std::max(0, static_cast<int>(margin)), progress);
+        error = watermarker.run(in, out, layers, std::max(0, static_cast<int>(margin)), progress);
     }
 
     env->ReleaseStringUTFChars(inputPath, in);
