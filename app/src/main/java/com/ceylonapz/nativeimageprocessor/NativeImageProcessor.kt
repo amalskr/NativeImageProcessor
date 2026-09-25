@@ -13,4 +13,10 @@ class NativeImageProcessor {
     external fun sayHello()
     /** Converts [bitmap] to grayscale in place. Returns null if it isn't ARGB_8888. */
     external fun toGrayscale(bitmap: Bitmap): Bitmap?
+
+    /**
+     * Returns a new [width] x [height] ARGB_8888 bitmap scaled from [bitmap] (bilinear).
+     * The source is not modified. Returns null on invalid input or unsupported format.
+     */
+    external fun resize(bitmap: Bitmap, width: Int, height: Int): Bitmap?
 }

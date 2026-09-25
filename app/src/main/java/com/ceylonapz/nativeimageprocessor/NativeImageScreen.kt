@@ -80,13 +80,15 @@ fun NativeImageScreen(modifier: Modifier = Modifier) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
+        // Operations chain on whatever is currently shown; Reset returns to the original.
+        val current = processedBitmap ?: bitmap
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f),
             contentAlignment = Alignment.Center
         ) {
-            val current = processedBitmap ?: bitmap
             when {
                 isLoading -> CircularProgressIndicator()
                 current != null -> Image(
@@ -98,6 +100,10 @@ fun NativeImageScreen(modifier: Modifier = Modifier) {
                 error != null -> Text(error!!)
                 else -> Text("No image selected")
             }
+        }
+
+        if (current != null) {
+            Text("${current.width} x ${current.height}")
         }
 
         Button(
@@ -117,7 +123,7 @@ fun NativeImageScreen(modifier: Modifier = Modifier) {
         ) {
             Button(
                 onClick = {
-                    val source = bitmap ?: return@Button
+                    val source = current ?: return@Button
                     scope.launch {
                         isLoading = true
                         // Native code edits pixels in place, so work on a copy
@@ -134,10 +140,41 @@ fun NativeImageScreen(modifier: Modifier = Modifier) {
                         isLoading = false
                     }
                 },
-                enabled = bitmap != null && !isLoading,
+                enabled = current != null && !isLoading,
                 modifier = Modifier.weight(1f)
             ) {
                 Text("Grayscale (C++)")
+            }
+
+            Button(
+                onClick = {
+                    val source = current ?: return@Button
+                    scope.launch {
+                        isLoading = true
+                        // resize() returns a new Bitmap and leaves the source untouched.
+                        val result = withContext(Dispatchers.Default) {
+                            try {
+                                processor?.resize(
+                                    source,
+                                    maxOf(1, source.width / 2),
+                                    maxOf(1, source.height / 2)
+                                )
+                            } catch (e: OutOfMemoryError) {
+                                null
+                            }
+                        }
+                        if (result != null) {
+                            processedBitmap = result
+                        } else {
+                            error = "Resize failed"
+                        }
+                        isLoading = false
+                    }
+                },
+                enabled = current != null && !isLoading,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("Resize 50%")
             }
 
             OutlinedButton(
