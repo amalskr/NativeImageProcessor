@@ -13,9 +13,11 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -23,6 +25,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -34,6 +37,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.ceylonapz.nativeimageprocessor.ui.theme.NativeImageProcessorTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @Composable
@@ -45,8 +49,10 @@ fun NativeImageScreen(modifier: Modifier = Modifier) {
 
     var selectedUri by remember { mutableStateOf<Uri?>(null) }
     var bitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var processedBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var isLoading by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
 
     // System photo picker: no storage permission required.
     val pickImage = rememberLauncherForActivityResult(
@@ -59,6 +65,7 @@ fun NativeImageScreen(modifier: Modifier = Modifier) {
         val uri = selectedUri ?: return@LaunchedEffect
         isLoading = true
         error = null
+        processedBitmap = null
         bitmap = try {
             withContext(Dispatchers.IO) { loadBitmap(context, uri) }
         } catch (e: Exception) {
@@ -79,7 +86,7 @@ fun NativeImageScreen(modifier: Modifier = Modifier) {
                 .weight(1f),
             contentAlignment = Alignment.Center
         ) {
-            val current = bitmap
+            val current = processedBitmap ?: bitmap
             when {
                 isLoading -> CircularProgressIndicator()
                 current != null -> Image(
@@ -104,11 +111,42 @@ fun NativeImageScreen(modifier: Modifier = Modifier) {
             Text("Pick Image")
         }
 
-        Button(
-            onClick = { processor?.sayHello() },
-            modifier = Modifier.fillMaxWidth()
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text("Call C++")
+            Button(
+                onClick = {
+                    val source = bitmap ?: return@Button
+                    scope.launch {
+                        isLoading = true
+                        // Native code edits pixels in place, so work on a copy
+                        // to keep the original for Reset.
+                        val result = withContext(Dispatchers.Default) {
+                            val copy = source.copy(Bitmap.Config.ARGB_8888, true)
+                            processor?.toGrayscale(copy)
+                        }
+                        if (result != null) {
+                            processedBitmap = result
+                        } else {
+                            error = "Grayscale failed"
+                        }
+                        isLoading = false
+                    }
+                },
+                enabled = bitmap != null && !isLoading,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("Grayscale (C++)")
+            }
+
+            OutlinedButton(
+                onClick = { processedBitmap = null },
+                enabled = processedBitmap != null && !isLoading,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("Reset")
+            }
         }
     }
 }

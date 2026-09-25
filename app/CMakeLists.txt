@@ -8,15 +8,11 @@ add_library(
         src/main/cpp/native_image_processor.cpp
 )
 
-find_library(
-        log-lib
-        log
-)
+find_library(log-lib log)
+find_library(jnigraphics-lib jnigraphics)
 
 target_link_libraries(
         native-image-processor
         ${log-lib}
+        ${jnigraphics-lib}
 )
-
-
-
